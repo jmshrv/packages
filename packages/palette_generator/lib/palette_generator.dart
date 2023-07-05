@@ -55,6 +55,14 @@ class _FromByteDataArgs {
   final List<PaletteTarget> targets;
 }
 
+typedef FromByteDataWorker = Future<PaletteGenerator> Function(
+  EncodedImage encodedImage, {
+  Rect? region,
+  required int maximumColorCount,
+  required List<PaletteFilter> filters,
+  required List<PaletteTarget> targets,
+});
+
 /// A class to extract prominent colors from an image for use as user interface
 /// colors.
 ///
@@ -153,7 +161,7 @@ class PaletteGenerator with Diagnosticable {
       avoidRedBlackWhitePaletteFilter
     ],
     List<PaletteTarget> targets = const <PaletteTarget>[],
-    bool useIsolate = true,
+    FromByteDataWorker? worker,
   }) async {
     assert(region == null || region != Rect.zero);
     assert(
@@ -172,37 +180,13 @@ class PaletteGenerator with Diagnosticable {
       'The encoding must be RGBA with 8 bits per channel.',
     );
 
-    // In order to use an isolate, make a recursive compute call. This is done
-    // this way to avoid changing the rest of the function.
-    if (useIsolate) {
-      return compute(
-          (_FromByteDataArgs message) => fromByteData(
-                message.encodedImage,
-                region: message.region,
-                maximumColorCount: message.maximumColorCount,
-                filters: message.filters,
-                targets: message.targets,
-                // This is false to stop the function from infinitely recursing.
-                useIsolate: false,
-              ),
-          _FromByteDataArgs(
-            encodedImage,
-            region: region,
-            maximumColorCount: maximumColorCount,
-            filters: filters,
-            targets: targets,
-          ));
-    }
+    worker ??= fromByteDataNoIsolate;
 
-    final _ColorCutQuantizer quantizer = _ColorCutQuantizer(
+    return worker(
       encodedImage,
-      maxColors: maximumColorCount,
-      filters: filters,
       region: region,
-    );
-    final List<PaletteColor> colors = await quantizer.quantizedColors;
-    return PaletteGenerator.fromColors(
-      colors,
+      maximumColorCount: maximumColorCount,
+      filters: filters,
       targets: targets,
     );
   }
@@ -252,7 +236,6 @@ class PaletteGenerator with Diagnosticable {
       maximumColorCount: maximumColorCount,
       filters: filters,
       targets: targets,
-      useIsolate: useIsolate,
     );
   }
 
@@ -350,6 +333,50 @@ class PaletteGenerator with Diagnosticable {
       targets: targets,
       useIsolate: useIsolate,
     );
+  }
+
+  static Future<PaletteGenerator> fromByteDataNoIsolate(
+    EncodedImage encodedImage, {
+    Rect? region,
+    required int maximumColorCount,
+    required List<PaletteFilter> filters,
+    required List<PaletteTarget> targets,
+  }) async {
+    final _ColorCutQuantizer quantizer = _ColorCutQuantizer(
+      encodedImage,
+      maxColors: maximumColorCount,
+      filters: filters,
+      region: region,
+    );
+    final List<PaletteColor> colors = await quantizer.quantizedColors;
+    return PaletteGenerator.fromColors(
+      colors,
+      targets: targets,
+    );
+  }
+
+  static Future<PaletteGenerator> fromByteDataIsolate(
+    EncodedImage encodedImage, {
+    Rect? region,
+    required int maximumColorCount,
+    required List<PaletteFilter> filters,
+    required List<PaletteTarget> targets,
+  }) async {
+    return compute(
+        (_FromByteDataArgs message) => fromByteDataNoIsolate(
+              message.encodedImage,
+              region: message.region,
+              maximumColorCount: message.maximumColorCount,
+              filters: message.filters,
+              targets: message.targets,
+            ),
+        _FromByteDataArgs(
+          encodedImage,
+          region: region,
+          maximumColorCount: maximumColorCount,
+          filters: filters,
+          targets: targets,
+        ));
   }
 
   static const int _defaultCalculateNumberColors = 16;
